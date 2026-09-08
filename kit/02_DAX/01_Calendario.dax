@@ -1,0 +1,41 @@
+// ============================================================
+// TABELLA CALENDARIO — Kit Matteo
+// Modellazione > Nuova tabella. Poi: Contrassegna come tabella data (colonna Data).
+// Adatta solo la riga MinData/MaxData se la tabella fatti ha un altro nome.
+// ============================================================
+
+Calendario =
+VAR MinData = MIN ( righe_ordine[data_ordine] )
+VAR MaxData = MAX ( righe_ordine[data_ordine] )
+VAR BaseCalendario =
+    CALENDAR ( DATE ( YEAR ( MinData ), 1, 1 ), DATE ( YEAR ( MaxData ), 12, 31 ) )
+RETURN
+ADDCOLUMNS (
+    BaseCalendario,
+    "Anno",             YEAR ( [Date] ),
+    "NumeroMese",       MONTH ( [Date] ),
+    "Mese",             FORMAT ( [Date], "mmmm", "it-IT" ),
+    "MeseBreve",        FORMAT ( [Date], "mmm", "it-IT" ),
+    "AnnoMese",         FORMAT ( [Date], "yyyy-mm" ),
+    "AnnoMeseEtichetta", FORMAT ( [Date], "mmm yy", "it-IT" ),
+    "Trimestre",        "T" & FORMAT ( [Date], "q" ),
+    "AnnoTrimestre",    YEAR ( [Date] ) & "-T" & FORMAT ( [Date], "q" ),
+    "Settimana",        WEEKNUM ( [Date], 21 ),
+    "GiornoSettimana",  FORMAT ( [Date], "dddd", "it-IT" ),
+    "NumGiornoSett",    WEEKDAY ( [Date], 2 ),
+    "IsFeriale",        IF ( WEEKDAY ( [Date], 2 ) <= 5, TRUE, FALSE ),
+    "DataFine",         EOMONTH ( [Date], 0 ),
+    "MeseOffset",       DATEDIFF ( TODAY (), [Date], MONTH ),
+    "AnnoOffset",       YEAR ( [Date] ) - YEAR ( TODAY () ),
+    "IsPassato",        [Date] <= TODAY ()
+)
+
+// ------------------------------------------------------------
+// DOPO AVER CREATO LA TABELLA — passaggi obbligatori:
+// 1. Rinomina la colonna [Date] in [Data]
+// 2. Ordina "Mese" per "NumeroMese"; "MeseBreve" per "NumeroMese";
+//    "AnnoMeseEtichetta" per "AnnoMese"; "GiornoSettimana" per "NumGiornoSett"
+// 3. Tabella > Contrassegna come tabella data > Data
+// 4. Crea la relazione Calendario[Data] --> tabella_fatti[data_*] (1 a molti)
+// 5. Nascondi le colonne tecniche (NumeroMese, NumGiornoSett, MeseOffset...)
+// ------------------------------------------------------------

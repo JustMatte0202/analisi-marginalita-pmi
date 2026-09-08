@@ -1,0 +1,94 @@
+// ============================================================
+// PAGINA "COSA SI PUO' RECUPERARE" — Kit Matteo
+// Le stime NON vanno scritte a mano in una casella di testo:
+// al primo aggiornamento dei dati diventerebbero false.
+// Queste misure le ricalcolano dal modello, con le ipotesi
+// dichiarate in cima a ciascuna (le VAR con i valori obiettivo).
+//
+// RICHIEDE: [Fatturato Lordo], [Fatturato Netto], [Sconto Medio %],
+//           [Costo Spedizioni], [Margine Netto %], [Giorni Fermo],
+//           [Giacenza], [Costo Unitario]
+// ============================================================
+
+
+// ------------------------------------------------------------
+// Base comune: quanti mesi copre l'analisi.
+// Serve per riportare tutto a base annua.
+// ------------------------------------------------------------
+
+Mesi Analisi =
+DATEDIFF ( MIN ( Calendario[Data] ), MAX ( Calendario[Data] ), MONTH ) + 1
+
+
+// ------------------------------------------------------------
+// AZIONE 1 — Rinegoziazione del cliente principale
+// Ipotesi: sconto portato al 20% e trasporto assegnato al cliente.
+// ------------------------------------------------------------
+
+Recupero Cliente Top =
+VAR ScontoObiettivo = 0.20
+VAR ClienteTop =
+    TOPN ( 1, ALL ( anagrafica_clienti[id_cliente] ), [Fatturato Netto], DESC )
+VAR LordoTop      = CALCULATE ( [Fatturato Lordo],   ClienteTop )
+VAR ScontoTop     = CALCULATE ( [Sconto Medio %],    ClienteTop )
+VAR TrasportoTop  = CALCULATE ( [Costo Spedizioni],  ClienteTop )
+VAR RecuperoPeriodo =
+    LordoTop * MAX ( ScontoTop - ScontoObiettivo, 0 ) + TrasportoTop
+RETURN
+DIVIDE ( RecuperoPeriodo, [Mesi Analisi] ) * 12
+
+
+// ------------------------------------------------------------
+// AZIONE 2 — Liquidazione del magazzino fermo
+// Ipotesi: solo i codici fermi da oltre 24 mesi, realizzati al 50%.
+// E' una tantum, non annua: nella card scrivilo.
+// ------------------------------------------------------------
+
+Recupero Magazzino Fermo =
+0.5 * SUMX (
+    FILTER (
+        VALUES ( anagrafica_articoli[codice_articolo] ),
+        [Giorni Fermo] > 730 && [Giacenza] > 0
+    ),
+    [Giacenza] * [Costo Unitario]
+)
+
+Codici da Liquidare =
+COUNTROWS (
+    FILTER (
+        VALUES ( anagrafica_articoli[codice_articolo] ),
+        [Giorni Fermo] > 730 && [Giacenza] > 0
+    )
+)
+
+
+// ------------------------------------------------------------
+// AZIONE 3 — Allineamento delle condizioni sulle famiglie peggiori
+// Ipotesi: le 3 famiglie sotto la media aziendale recuperano
+// meta' del divario (prudente: non si riallinea mai tutto).
+// ------------------------------------------------------------
+
+Recupero Condizioni Vendita =
+VAR MargineMedio = CALCULATE ( [Margine Netto %], ALL ( anagrafica_articoli ) )
+VAR FamigliePeggiori =
+    TOPN ( 3, ALL ( anagrafica_articoli[famiglia] ), [Margine Netto %], ASC )
+VAR DivarioTotale =
+    SUMX (
+        FamigliePeggiori,
+        MAX ( MargineMedio - [Margine Netto %], 0 ) * [Fatturato Netto]
+    )
+RETURN
+DIVIDE ( DivarioTotale * 0.5, [Mesi Analisi] ) * 12
+
+
+// ------------------------------------------------------------
+// SINTESI — il numero unico da mettere in cima alla pagina
+// ------------------------------------------------------------
+
+Recupero Ricorrente Annuo =
+[Recupero Cliente Top] + [Recupero Condizioni Vendita]
+
+Recupero Una Tantum = [Recupero Magazzino Fermo]
+
+Lbl Recupero Totale Primo Anno =
+"≈ " & FORMAT ( [Recupero Ricorrente Annuo] + [Recupero Una Tantum], "#,##0" ) & " €"

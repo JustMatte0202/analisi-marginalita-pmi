@@ -1,0 +1,88 @@
+// ============================================================
+// PONTE MARGINE — costruzione del grafico a cascata
+// Il visual "Grafico a cascata" vuole UNA categoria e UNA misura.
+// Servono quindi 3 pezzi: una tabella di appoggio, una misura interruttore,
+// e il visual. Segui i passaggi in ordine.
+// ============================================================
+
+
+// ------------------------------------------------------------
+// PASSO 1 — Tabella di appoggio (Modellazione > Nuova tabella)
+// E' una tabella "scollegata": nessuna relazione con le altre. E' normale.
+// Serve solo a dare al grafico le etichette e l'ordine delle barre.
+// ------------------------------------------------------------
+
+Ponte Margine =
+DATATABLE (
+    "Ordine", INTEGER,
+    "Voce", STRING,
+    {
+        { 1, "Margine a listino" },
+        { 2, "Effetto mix" },
+        { 3, "Sconti concessi" },
+        { 4, "Trasporti a carico azienda" },
+        { 5, "Note di credito / resi" }
+    }
+)
+
+// DOPO AVERLA CREATA:
+// - seleziona la colonna [Voce] > scheda Strumenti colonna > Ordina per colonna > Ordine
+//   (senza questo le barre escono in ordine alfabetico)
+// - nascondi la colonna [Ordine] dalla vista report
+
+
+// ------------------------------------------------------------
+// PASSO 2 — Misura interruttore (nella tabella _Misure)
+// Restituisce il valore giusto a seconda della barra su cui si trova.
+// ------------------------------------------------------------
+
+Valore Ponte =
+SWITCH (
+    SELECTEDVALUE ( 'Ponte Margine'[Ordine] ),
+    1, [Ponte 1 Margine a Listino],
+    2, [Ponte 2 Effetto Mix],
+    3, [Ponte 3 Sconti],
+    4, [Ponte 4 Trasporti],
+    5, [Ponte 5 Resi],
+    BLANK ()
+)
+
+
+// ------------------------------------------------------------
+// PASSO 3 — Misura di controllo (pagina nascosta qualita' dati)
+// Se non dice "OK" c'e' un errore nelle misure a monte: NON consegnare.
+// ------------------------------------------------------------
+
+QD Ponte Quadra =
+VAR Somma =
+    [Ponte 1 Margine a Listino] + [Ponte 2 Effetto Mix] + [Ponte 3 Sconti]
+        + [Ponte 4 Trasporti] + [Ponte 5 Resi]
+VAR Atteso = [Ponte 6 Margine Netto]
+VAR Scarto = Somma - Atteso
+RETURN
+IF (
+    ABS ( Scarto ) < 1,
+    "OK — il ponte quadra",
+    "ERRORE — scarto di " & FORMAT ( Scarto, "#,##0 €" )
+)
+
+
+// ------------------------------------------------------------
+// PASSO 4 — Il visual
+// 1. Inserisci un "Grafico a cascata"
+// 2. Categoria  -> 'Ponte Margine'[Voce]
+// 3. Asse Y     -> [Valore Ponte]
+// 4. NON mettere niente in "Suddivisione"
+//
+// La colonna finale "Totale" la calcola da sola il grafico ed e' il
+// margine netto: per questo la tabella si ferma alla voce 5.
+// [Ponte 6 Margine Netto] serve solo alla verifica del PASSO 3.
+//
+// FORMATTAZIONE:
+// - Colonne di aumento  -> #4A7C59 (verde)
+// - Colonne di riduzione -> #A63A2E (rosso mattone)
+// - Colonna Totale       -> #1F3A5F (blu)
+// - Etichette dati: attive, formato "#,##0 €", nessun decimale
+// - Titolo: "Dai 41% teorici ai 33% reali: dove finiscono gli otto punti"
+//   (un titolo che dice cosa capire, non cosa contiene il grafico)
+// ------------------------------------------------------------

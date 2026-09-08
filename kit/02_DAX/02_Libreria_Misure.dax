@@ -1,0 +1,273 @@
+// ============================================================
+// LIBRERIA MISURE STANDARD — Kit Matteo
+// Distribuzione / commercio all'ingrosso B2B.
+// Creare una tabella vuota "_Misure" (Inserisci dati > tabella vuota) e
+// ospitare qui tutte le misure, organizzate in cartelle di visualizzazione.
+//
+// CONVENZIONE NOMI COLONNE ATTESA (rinomina in Power Query se diverse):
+//   righe_ordine[quantita], [prezzo_unitario], [sconto_pct], [costo_riga],
+//                [id_ordine], [codice_articolo], [id_cliente], [data_ordine]
+//   anagrafica_articoli[costo_acquisto], [prezzo_listino], [famiglia]
+//   note_credito[valore], [id_cliente], [data]
+//   movimenti_magazzino[quantita], [data_movimento], [tipo]
+// ============================================================
+
+
+// ------------------------------------------------------------
+// 1. FATTURATO  (cartella: 01 Fatturato)
+// ------------------------------------------------------------
+
+Fatturato Lordo =
+SUMX ( righe_ordine, righe_ordine[quantita] * righe_ordine[prezzo_unitario] )
+
+Sconti Concessi =
+SUMX (
+    righe_ordine,
+    righe_ordine[quantita] * righe_ordine[prezzo_unitario] * righe_ordine[sconto_pct]
+)
+
+Fatturato Netto = [Fatturato Lordo] - [Sconti Concessi]
+
+Sconto Medio % =
+DIVIDE ( [Sconti Concessi], [Fatturato Lordo] )
+
+// Trasporto: costo di TESTATA, non di riga.
+// Va sempre sommato a livello ordine, altrimenti si moltiplica per il n. di righe.
+Costo Spedizioni =
+SUMX (
+    VALUES ( righe_ordine[id_ordine] ),
+    CALCULATE ( MAX ( righe_ordine[costo_trasporto] ) )
+)
+
+Valore Resi = SUM ( note_credito[valore] )
+
+Incidenza Resi % = DIVIDE ( [Valore Resi], [Fatturato Netto] )
+
+Fatturato Netto AP =                                    // anno precedente
+CALCULATE ( [Fatturato Netto], SAMEPERIODLASTYEAR ( Calendario[Data] ) )
+
+Var % Fatturato AP =
+VAR Corrente = [Fatturato Netto]
+VAR Precedente = [Fatturato Netto AP]
+RETURN IF ( NOT ISBLANK ( Precedente ), DIVIDE ( Corrente - Precedente, Precedente ) )
+
+Fatturato Netto YTD =
+TOTALYTD ( [Fatturato Netto], Calendario[Data] )
+
+Fatturato Netto MM3 =                                   // media mobile 3 mesi
+AVERAGEX ( DATESINPERIOD ( Calendario[Data], MAX ( Calendario[Data] ), -3, MONTH ), [Fatturato Netto] )
+
+
+// ------------------------------------------------------------
+// 2. MARGINALITA'  (cartella: 02 Margine)
+// ------------------------------------------------------------
+
+Costo del Venduto =
+SUMX (
+    righe_ordine,
+    righe_ordine[quantita]
+        * RELATED ( anagrafica_articoli[costo_acquisto] )
+)
+
+Margine Lordo = [Fatturato Netto] - [Costo del Venduto]
+
+Margine Lordo % = DIVIDE ( [Margine Lordo], [Fatturato Netto] )
+
+// Margine netto: dopo trasporto a carico azienda e note di credito.
+Margine Netto = [Margine Lordo] - [Costo Spedizioni] - [Valore Resi]
+
+Margine Netto % = DIVIDE ( [Margine Netto], [Fatturato Netto] )
+
+// Margine teorico se tutto fosse venduto a listino pieno.
+Fatturato a Listino =
+SUMX (
+    righe_ordine,
+    righe_ordine[quantita] * RELATED ( anagrafica_articoli[prezzo_listino] )
+)
+
+Margine Listino % =
+DIVIDE ( [Fatturato a Listino] - [Costo del Venduto], [Fatturato a Listino] )
+
+Divario Margine = [Margine Listino %] - [Margine Netto %]
+
+// --- PONTE MARGINE (waterfall) — tutto in EURO, base coerente ---
+// Usare queste 6 misure in un grafico a cascata: si sommano esattamente.
+// E' la slide che risolve il problema "le percentuali non tornano".
+Ponte 1 Margine a Listino = [Fatturato a Listino] - [Costo del Venduto]
+Ponte 2 Effetto Mix       = ( [Fatturato Lordo] - [Costo del Venduto] ) - [Ponte 1 Margine a Listino]
+Ponte 3 Sconti            = - [Sconti Concessi]
+Ponte 4 Trasporti         = - [Costo Spedizioni]
+Ponte 5 Resi              = - [Valore Resi]
+Ponte 6 Margine Netto     = [Margine Netto]     // verifica: 1+2+3+4+5 = 6
+
+
+// ------------------------------------------------------------
+// 3. CLIENTI E ORDINI  (cartella: 03 Clienti)
+// ------------------------------------------------------------
+
+Numero Ordini = DISTINCTCOUNT ( righe_ordine[id_ordine] )
+
+Numero Righe = COUNTROWS ( righe_ordine )
+
+Clienti Attivi = DISTINCTCOUNT ( righe_ordine[id_cliente] )
+
+Ticket Medio = DIVIDE ( [Fatturato Netto], [Numero Ordini] )
+
+Righe per Ordine = DIVIDE ( [Numero Righe], [Numero Ordini] )
+
+Fatturato per Cliente = DIVIDE ( [Fatturato Netto], [Clienti Attivi] )
+
+Ordini per Cliente = DIVIDE ( [Numero Ordini], [Clienti Attivi] )
+
+// Concentrazione: quanto pesa il primo cliente (rischio commerciale)
+Peso Primo Cliente % =
+VAR Totale = CALCULATE ( [Fatturato Netto], ALL ( anagrafica_clienti ) )
+VAR Top1 =
+    MAXX ( VALUES ( anagrafica_clienti[id_cliente] ), [Fatturato Netto] )
+RETURN DIVIDE ( Top1, Totale )
+
+// % del fatturato generata dai primi 10 clienti
+Peso Top 10 Clienti % =
+VAR Totale = CALCULATE ( [Fatturato Netto], ALL ( anagrafica_clienti ) )
+VAR Top10 =
+    SUMX ( TOPN ( 10, ALL ( anagrafica_clienti[id_cliente] ), [Fatturato Netto], DESC ), [Fatturato Netto] )
+RETURN DIVIDE ( Top10, Totale )
+
+// Clienti sotto la soglia di marginalità accettabile (parametro: 15%)
+Clienti Sotto Soglia =
+COUNTROWS (
+    FILTER ( VALUES ( anagrafica_clienti[id_cliente] ), [Margine Netto %] < 0.15 )
+)
+
+Fatturato Clienti Sotto Soglia =
+SUMX (
+    FILTER ( VALUES ( anagrafica_clienti[id_cliente] ), [Margine Netto %] < 0.15 ),
+    [Fatturato Netto]
+)
+
+
+// ------------------------------------------------------------
+// 4. MAGAZZINO E DEAD STOCK  (cartella: 04 Magazzino)
+// ------------------------------------------------------------
+
+Giacenza = SUM ( movimenti_magazzino[quantita] )
+
+Costo Unitario = AVERAGE ( anagrafica_articoli[costo_acquisto] )
+
+Valore Immobilizzato =
+SUMX (
+    VALUES ( anagrafica_articoli[codice_articolo] ),
+    [Giacenza] * [Costo Unitario]
+)
+
+// Giorni dall'ultima uscita di magazzino
+Giorni Fermo =
+VAR UltimaUscita =
+    CALCULATE (
+        MAX ( movimenti_magazzino[data_movimento] ),
+        movimenti_magazzino[tipo] = "USCITA"
+    )
+VAR DataRif = MAX ( Calendario[Data] )
+RETURN IF ( NOT ISBLANK ( [Giacenza] ), DATEDIFF ( UltimaUscita, DataRif, DAY ) )
+
+// Dead stock = fermo da oltre 12 mesi con giacenza positiva
+Valore Dead Stock =
+SUMX (
+    FILTER (
+        VALUES ( anagrafica_articoli[codice_articolo] ),
+        [Giorni Fermo] > 365 && [Giacenza] > 0
+    ),
+    [Giacenza] * [Costo Unitario]
+)
+
+Codici Dead Stock =
+COUNTROWS (
+    FILTER (
+        VALUES ( anagrafica_articoli[codice_articolo] ),
+        [Giorni Fermo] > 365 && [Giacenza] > 0
+    )
+)
+
+Incidenza Dead Stock % = DIVIDE ( [Valore Dead Stock], [Valore Immobilizzato] )
+
+// Mesi di fatturato immobilizzati — il numero che parla al titolare
+Mesi Fatturato Immobilizzati =
+DIVIDE ( [Valore Immobilizzato], DIVIDE ( [Fatturato Netto], 12 ) )
+
+Indice Rotazione = DIVIDE ( [Costo del Venduto], [Valore Immobilizzato] )
+
+Giorni Copertura Scorte = DIVIDE ( 365, [Indice Rotazione] )
+
+// Recuperabile liquidando a metà valore il fermo oltre 24 mesi
+Cassa Recuperabile Stimata =
+0.5 * SUMX (
+    FILTER (
+        VALUES ( anagrafica_articoli[codice_articolo] ),
+        [Giorni Fermo] > 730 && [Giacenza] > 0
+    ),
+    [Giacenza] * [Costo Unitario]
+)
+
+
+// ------------------------------------------------------------
+// 5. CONTROLLO QUALITA' DATI  (cartella: 99 Qualita Dati)
+// Da tenere in una pagina nascosta: se un numero diventa > 0, il modello
+// ha un problema. Sono il tuo airbag prima di consegnare al cliente.
+// ------------------------------------------------------------
+
+QD Articoli senza Costo =
+COUNTROWS ( FILTER ( anagrafica_articoli, ISBLANK ( anagrafica_articoli[costo_acquisto] ) || anagrafica_articoli[costo_acquisto] = 0 ) )
+
+QD Righe senza Articolo in Anagrafica =
+COUNTROWS ( FILTER ( righe_ordine, ISBLANK ( RELATED ( anagrafica_articoli[codice_articolo] ) ) ) )
+
+QD Codici Duplicati =
+COUNTROWS ( anagrafica_articoli ) - DISTINCTCOUNT ( anagrafica_articoli[codice_articolo] )
+
+QD Clienti Duplicati =
+COUNTROWS ( anagrafica_clienti ) - DISTINCTCOUNT ( anagrafica_clienti[id_cliente] )
+
+QD Date Fuori Range =
+COUNTROWS ( FILTER ( righe_ordine, righe_ordine[data_ordine] > TODAY () || righe_ordine[data_ordine] < DATE ( 2000, 1, 1 ) ) )
+
+QD Righe con Sconto Anomalo =
+COUNTROWS ( FILTER ( righe_ordine, righe_ordine[sconto_pct] < 0 || righe_ordine[sconto_pct] > 0.9 ) )
+
+QD Margine Negativo su Riga =
+COUNTROWS (
+    FILTER (
+        righe_ordine,
+        righe_ordine[quantita] * righe_ordine[prezzo_unitario] * ( 1 - righe_ordine[sconto_pct] )
+            < righe_ordine[quantita] * RELATED ( anagrafica_articoli[costo_acquisto] )
+    )
+)
+
+QD Resi su Fatturato % = DIVIDE ( [Valore Resi], [Fatturato Netto] )
+// se supera il 10% quasi certamente c'e' un problema di separatore decimale
+
+QD Semaforo =
+VAR Problemi =
+    [QD Articoli senza Costo] + [QD Righe senza Articolo in Anagrafica]
+        + [QD Codici Duplicati] + [QD Clienti Duplicati]
+        + [QD Date Fuori Range] + [QD Righe con Sconto Anomalo]
+RETURN IF ( Problemi = 0, "OK — modello pulito", "ATTENZIONE — " & Problemi & " anomalie da verificare" )
+
+
+// ------------------------------------------------------------
+// 6. FORMATTAZIONE PER LE CARD (cartella: 90 Etichette)
+// Numeri grandi leggibili da un titolare, non da un analista.
+// ------------------------------------------------------------
+
+Lbl Fatturato Netto =
+VAR V = [Fatturato Netto]
+RETURN
+SWITCH (
+    TRUE (),
+    V >= 1000000, FORMAT ( V / 1000000, "0,0" ) & " Mln €",
+    V >= 1000,    FORMAT ( V / 1000, "0" ) & "k €",
+    FORMAT ( V, "0" ) & " €"
+)
+
+Lbl Var AP =
+VAR V = [Var % Fatturato AP]
+RETURN IF ( ISBLANK ( V ), "n/d", IF ( V >= 0, "▲ ", "▼ " ) & FORMAT ( ABS ( V ), "0,0%" ) & " vs AP" )
